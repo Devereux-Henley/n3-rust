@@ -1,5 +1,5 @@
 [package]
-name = "n3-rust"
+name = "n3"
 version = "0.1.0"
 authors = ["Henley, Devereux <devereux.henley@gmail.com>"]
 edition = "2018"
