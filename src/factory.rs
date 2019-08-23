@@ -1,3 +1,5 @@
+use super::iri;
+
 pub enum TermType {
     NamedNode,
     Literal,
@@ -40,6 +42,28 @@ impl<'a> PartialEq for Term<'a> {
             _ => self.id == other.id
         }
     }
+}
+
+pub fn get_literal_data_type_string(id: &str) -> &str {
+    let last_quote_position = id.rfind('"');
+    match last_quote_position {
+        Some(index) => {
+            let seperator = id.chars().nth(index);
+
+            if seperator == Some('^') {
+                &id[index + 2..]
+            } else if seperator == Some('@') {
+                iri::xsd::STRING
+            } else {
+                iri::rdf::LANG_STRING
+            }
+        },
+        None => ""
+    }
+}
+
+pub fn get_literal_data_type<'a>(id: &'a str) -> Term<'a> {
+    Term { id: get_literal_data_type_string(id), kind: TermType::NamedNode }
 }
 
 pub static DEFAULT_GRAPH: Term<'static> = Term {
