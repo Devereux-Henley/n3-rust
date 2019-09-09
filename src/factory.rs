@@ -1,6 +1,9 @@
+//! N3-rust implementations of the RDF/JS core data types
+//! See http://rdf.js.org/data-model-spec/#data-interfaces
+
 use super::iri;
 use heapless::String;
-use heapless::consts::U8;
+use heapless::consts::U0;
 use uuid::Uuid;
 
 pub enum TermType {
@@ -89,7 +92,7 @@ pub fn from_id<'a, S>(id: &'a str) -> Term<S> where S: heapless::ArrayLength<u8>
     }
 }
 
-pub static DEFAULT_GRAPH: Term<U8> = Term { id: String(heapless::i::String::new()), value: String(heapless::i::String::new()), kind: TermType::DefaultGraph, _secret: () };
+pub static DEFAULT_GRAPH: Term<U0> = Term { id: String(heapless::i::String::new()), value: String(heapless::i::String::new()), kind: TermType::DefaultGraph, _secret: () };
 
 // Tests
 

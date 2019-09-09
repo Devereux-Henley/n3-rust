@@ -1,10 +1,19 @@
 [package]
 name = "n3"
 version = "0.1.0"
-authors = ["Henley, Devereux <devereux.henley@gmail.com>"]
+authors = ["Devereux Henley <devereux.henley@gmail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "Modified MIT"
+repository = "https://github.com/Devereux-Henley/n3-rust"
+categories = [
+  "no-std"
+]
+keywords = [
+  "rdf",
+  "n3",
+  "turtle",
+  "solid",
+]
 
 [dependencies]
 heapless = "0.5.1"
