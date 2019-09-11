@@ -10,7 +10,6 @@ pub struct NamedNode;
 pub struct Literal;
 pub struct BlankNode;
 pub struct Variable;
-pub struct DefaultGraph;
 
 /// An RDF Term, that may be of the kinds defined in [`TermType`].
 #[derive(Clone)]
