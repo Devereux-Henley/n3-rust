@@ -17,4 +17,4 @@ keywords = [
 
 [dependencies]
 heapless = "0.5.1"
-uuid = { version = "0.5.1", features = ["v4"] }
+numtoa = "0.2.3"

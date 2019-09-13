@@ -4,7 +4,7 @@
 use core::convert::TryFrom;
 use super::iri;
 use heapless::String;
-use heapless::consts::U0;
+use heapless::consts::{U0, U32};
 
 pub struct NamedNode;
 pub struct Literal;
@@ -90,8 +90,42 @@ pub fn literal<'a, S>(id: &'a str) -> Term<Literal, S> where S: heapless::ArrayL
     Term { id: String::from(id), kind: Literal, value: String::from(find_quoted_content(id)), _secret: () }
 }
 
-pub fn blank_node<'a, S>(id: &'a str) -> Term<BlankNode, S> where S: heapless::ArrayLength<u8> {
-    Term { id: String::from(id), kind: BlankNode, value: String::from(&id[2..]), _secret: () }
+pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str> where S: heapless::ArrayLength<u8> {
+    static mut blank_node_counter: i32 = 0;
+
+    if id.is_empty() {
+        let mut new_id: String<S> = String::from(":_n3-");
+
+        unsafe {
+            let blank_node_str: String<U32> = String::from(blank_node_counter);
+            blank_node_counter += 1;
+
+            return match new_id.push_str(&blank_node_str) {
+                Ok(_) =>  {
+                    let new_value = String::from(&new_id[2..]);
+
+                    Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () })
+                },
+                Err(_) => Err("Blank Node id was not allocated enough space.")
+            }
+        }
+    }
+
+    if id.len() < 2usize {
+        return Err("Blank node id must be longer than 2 characters.");
+    }
+
+
+    let mut new_id: String<S> = String::from(":_");
+
+    match new_id.push_str(id) {
+        Ok(_) => {
+            let new_value = String::from(&new_id[2..]);
+
+            Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () })
+        },
+        Err(_) => Err("Blank Node id was not allocated enough space.")
+    }
 }
 
 pub fn variable<'a, S>(id: &'a str) -> Term<Variable, S> where S: heapless::ArrayLength<u8> {
@@ -124,7 +158,7 @@ impl<'a, S> TryFrom<&'a str> for Term<BlankNode, S> where S: heapless::ArrayLeng
 
     fn try_from(id: &'a str) -> Result<Self, Self::Error> {
         match id.chars().nth(0usize) {
-            Some('_') => Ok(blank_node(id)),
+            Some('_') => blank_node(id),
             Some(_) => Err("BlankNode must begin with '_'."),
             None => Err("BlankNode cannot be constructed from an empty id.")
         }
@@ -157,7 +191,12 @@ impl<'a, S> TryFrom<&'a str> for Term<Variable, S> where S: heapless::ArrayLengt
 
 pub fn from_id<'a, S>(id: &'a str) -> Result<ParsedTerm<S>, &'static str> where S: heapless::ArrayLength<u8> {
     match id.chars().nth(0usize) {
-        Some('_') => Ok(ParsedTerm::BlankNode(blank_node(id))),
+        Some('_') => {
+            match blank_node(id) {
+                Ok(node) => Ok(ParsedTerm::BlankNode(node)),
+                Err(message) => Err(message)
+            }
+        },
         Some('?') => Ok(ParsedTerm::Variable(variable(id))),
         Some('"') => Ok(ParsedTerm::Literal(literal(id))),
         Some(_) => Ok(ParsedTerm::NamedNode(named_node(id))),
@@ -195,15 +234,46 @@ mod tests {
     use heapless::consts::{U8, U16};
 
     #[test]
+    fn id() {
+        let named_node: Term<NamedNode, U8> = super::named_node("abc");
+        let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
+        let blank_node: Term<BlankNode, U8> = super::blank_node("abc").unwrap();
+        let variable: Term<Variable, U8> = super::variable("1abc");
+
+        assert_eq!(named_node.id, "abc");
+        assert_eq!(literal.id, "\"abc\"@123");
+        assert_eq!(blank_node.id, ":_abc");
+        assert_eq!(variable.id, "1abc");
+    }
+
+    #[test]
     fn value() {
         let named_node: Term<NamedNode, U8> = super::named_node("abc");
         let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
-        let blank_node: Term<BlankNode, U8> = super::blank_node("12abc");
+        let blank_node: Term<BlankNode, U8> = super::blank_node("abc").unwrap();
         let variable: Term<Variable, U8> = super::variable("1abc");
 
         assert_eq!(named_node.value, "abc");
         assert_eq!(literal.value, "abc");
         assert_eq!(blank_node.value, "abc");
         assert_eq!(variable.value, "abc");
+    }
+
+    #[test]
+    fn blank_node_id() {
+        let blank_node_0: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("");
+        let blank_node_1: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("");
+
+        assert_eq!(blank_node_0.is_ok(), true);
+        assert_eq!(blank_node_1.is_ok(), true);
+
+        let bn0 = blank_node_0.unwrap();
+        let bn1 = blank_node_1.unwrap();
+
+        assert_eq!(bn0.id, ":_n3-0");
+        assert_eq!(bn1.id, ":_n3-1");
+
+        assert_eq!(bn0.value, "n3-0");
+        assert_eq!(bn1.value, "n3-1");
     }
 }
