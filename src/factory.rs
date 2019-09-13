@@ -27,6 +27,45 @@ pub struct Term<T, S> where S: heapless::ArrayLength<u8> {
     _secret: ()
 }
 
+impl<S> Term<Literal, S> where S: heapless::ArrayLength<u8> {
+    fn data_type_string(&self) -> &str {
+        let last_quote_position = self.id.rfind('"');
+        match last_quote_position {
+            Some(index) => {
+                let seperator = self.id.chars().nth(index);
+
+                if seperator == Some('^') {
+                    &self.id[index + 2..]
+                } else if seperator == Some('@') {
+                    iri::xsd::STRING
+                } else {
+                    iri::rdf::LANG_STRING
+                }
+            },
+            None => ""
+        }
+    }
+
+    pub fn data_type(&self) -> Term<NamedNode, S> {
+        named_node(self.data_type_string())
+    }
+
+    pub fn language(&self) -> &str {
+        let last_quote_position = self.id.rfind('"');
+
+        match last_quote_position {
+            Some(position) => {
+                if position < self.id.len() + 2 && self.id.chars().nth(position + 1).unwrap_or(' ') == '@' {
+                    &self.id[position + 2..]
+                } else {
+                    ""
+                }
+            },
+            None => ""
+        }
+    }
+}
+
 pub enum Subject<S> where S: heapless::ArrayLength<u8> {
     NamedNode(Term<NamedNode, S>),
     BlankNode(Term<BlankNode, S>),
@@ -66,7 +105,8 @@ pub enum ParsedTerm<S> where S: heapless::ArrayLength<u8> {
     NamedNode(Term<NamedNode, S>),
     Literal(Term<Literal, S>),
     BlankNode(Term<BlankNode, S>),
-    Variable(Term<Variable, S>)
+    Variable(Term<Variable, S>),
+    DefaultGraph
 }
 
 fn find_quoted_content(value: &str) -> &str {
@@ -84,6 +124,19 @@ fn find_quoted_content(value: &str) -> &str {
 
 pub fn named_node<'a, S>(id: &'a str) -> Term<NamedNode, S> where S: heapless::ArrayLength<u8> {
     Term { id: String::from(id), kind: NamedNode, value: String::from(id), _secret: () }
+}
+
+pub fn boolean_literal<S>(value: bool) -> Result<Term<Literal, S>, &'static str> where S: heapless::ArrayLength<u8> {
+    let mut new_id: String<S> = String::from(if value {  "\"true\"^^" } else { "\"false\"^^" });
+
+    match new_id.push_str(iri::xsd::BOOLEAN) {
+        Ok(_) => {
+            let new_value = String::from(find_quoted_content(&new_id));
+
+            Ok(Term { id: new_id, kind: Literal, value: new_value, _secret: () })
+        },
+        Err(_) => Err("Literal id was not allocated enough space")
+    }
 }
 
 pub fn literal<'a, S>(id: &'a str) -> Term<Literal, S> where S: heapless::ArrayLength<u8> {
@@ -214,43 +267,22 @@ pub fn from_id<'a, S>(id: &'a str) -> Result<ParsedTerm<S>, &'static str> where 
         },
         Some('"') => Ok(ParsedTerm::Literal(literal(id))),
         Some(_) => Ok(ParsedTerm::NamedNode(named_node(id))),
-        None => Err("Cannot parse term from empty string.")
+        None => Ok(ParsedTerm::DefaultGraph)
     }
-}
-
-pub fn get_literal_data_type_string<'a>(id: &'a str) -> &'a str {
-    let last_quote_position = id.rfind('"');
-    match last_quote_position {
-        Some(index) => {
-            let seperator = id.chars().nth(index);
-
-            if seperator == Some('^') {
-                &id[index + 2..]
-            } else if seperator == Some('@') {
-                iri::xsd::STRING
-            } else {
-                iri::rdf::LANG_STRING
-            }
-        },
-        None => ""
-    }
-}
-
-pub fn get_literal_data_type<'a, S>(term: Term<Literal, S>) -> Term<NamedNode, S> where S: heapless::ArrayLength<u8> {
-    named_node(get_literal_data_type_string(&term.id))
 }
 
 // Tests
 
 #[cfg(test)]
 mod tests {
+    use super::super::iri;
     use super::{Term, NamedNode, Literal, BlankNode, Variable};
-    use heapless::consts::{U8, U16};
+    use heapless::consts::{U8, U16, U32, U64};
 
     #[test]
     fn id() {
         let named_node: Term<NamedNode, U8> = super::named_node("abc");
-        let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
+        let literal: Term<Literal, U16> = super::literal("\"abc\"@en-us");
         let blank_node: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("abc");
         let variable: Result<Term<Variable, U8>, &'static str> = super::variable("abc");
 
@@ -258,7 +290,7 @@ mod tests {
         assert_eq!(variable.is_ok(), true);
 
         assert_eq!(named_node.id, "abc");
-        assert_eq!(literal.id, "\"abc\"@123");
+        assert_eq!(literal.id, "\"abc\"@en-us");
         assert_eq!(blank_node.unwrap().id, ":_abc");
         assert_eq!(variable.unwrap().id, "?abc");
     }
@@ -266,7 +298,7 @@ mod tests {
     #[test]
     fn value() {
         let named_node: Term<NamedNode, U8> = super::named_node("abc");
-        let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
+        let literal: Term<Literal, U16> = super::literal("\"abc\"@en-us");
         let blank_node: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("abc");
         let variable: Result<Term<Variable, U8>, &'static str> = super::variable("abc");
 
@@ -277,6 +309,24 @@ mod tests {
         assert_eq!(literal.value, "abc");
         assert_eq!(blank_node.unwrap().value, "abc");
         assert_eq!(variable.unwrap().value, "abc");
+    }
+
+    #[test]
+    fn boolean_literal() {
+        let literal: Result<Term<Literal, U64>, &'static str> = super::boolean_literal(true);
+
+        assert_eq!(literal.is_ok(), true);
+
+        let ok_literal = literal.unwrap();
+        assert_eq!(ok_literal.id, "\"true\"^^http://www.w3.org/2001/XMLSchema#boolean");
+        assert_eq!(ok_literal.value, "true");
+    }
+
+    #[test]
+    fn literal_language() {
+        let literal: Term<Literal, U16> = super::literal("\"abc\"@en-us");
+
+        assert_eq!(literal.language(), "en-us");
     }
 
     #[test]
