@@ -91,14 +91,14 @@ pub fn literal<'a, S>(id: &'a str) -> Term<Literal, S> where S: heapless::ArrayL
 }
 
 pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str> where S: heapless::ArrayLength<u8> {
-    static mut blank_node_counter: i32 = 0;
+    static mut BLANK_NODE_COUNTER: i32 = 0;
 
     if id.is_empty() {
         let mut new_id: String<S> = String::from(":_n3-");
 
         unsafe {
-            let blank_node_str: String<U32> = String::from(blank_node_counter);
-            blank_node_counter += 1;
+            let blank_node_str: String<U32> = String::from(BLANK_NODE_COUNTER);
+            BLANK_NODE_COUNTER += 1;
 
             return match new_id.push_str(&blank_node_str) {
                 Ok(_) =>  {
@@ -128,8 +128,17 @@ pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str
     }
 }
 
-pub fn variable<'a, S>(id: &'a str) -> Term<Variable, S> where S: heapless::ArrayLength<u8> {
-    Term { id: String::from(id), kind: Variable, value: String::from(&id[1..]), _secret: () }
+pub fn variable<'a, S>(id: &'a str) -> Result<Term<Variable, S>, &'static str> where S: heapless::ArrayLength<u8> {
+    let mut new_id: String<S> = String::from("?");
+
+    match new_id.push_str(id) {
+        Ok(_) => {
+            let new_value = String::from(&new_id[1..]);
+
+            Ok(Term { id: new_id, kind: Variable, value: new_value, _secret: () })
+        },
+        Err(_) => Err("Variable id was not allocated enough space.")
+    }
 }
 
 pub fn triple<S, P, O>(subject: Subject<S>, predicate: Predicate<P>, object: Object<O>) -> Quad<S, P, O, U0>
@@ -182,7 +191,7 @@ impl<'a, S> TryFrom<&'a str> for Term<Variable, S> where S: heapless::ArrayLengt
 
     fn try_from(id: &'a str) -> Result<Self, Self::Error> {
         match id.chars().nth(0usize) {
-            Some('"') => Ok(variable(id)),
+            Some('"') => variable(id),
             Some(_) => Err("Variable must begin with '\"'."),
             None => Err("Variable cannot be constructed from an empty id.")
         }
@@ -197,7 +206,12 @@ pub fn from_id<'a, S>(id: &'a str) -> Result<ParsedTerm<S>, &'static str> where 
                 Err(message) => Err(message)
             }
         },
-        Some('?') => Ok(ParsedTerm::Variable(variable(id))),
+        Some('?') => {
+            match variable(id) {
+                Ok(node) => Ok(ParsedTerm::Variable(node)),
+                Err(message) => Err(message)
+            }
+        },
         Some('"') => Ok(ParsedTerm::Literal(literal(id))),
         Some(_) => Ok(ParsedTerm::NamedNode(named_node(id))),
         None => Err("Cannot parse term from empty string.")
@@ -237,26 +251,32 @@ mod tests {
     fn id() {
         let named_node: Term<NamedNode, U8> = super::named_node("abc");
         let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
-        let blank_node: Term<BlankNode, U8> = super::blank_node("abc").unwrap();
-        let variable: Term<Variable, U8> = super::variable("1abc");
+        let blank_node: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("abc");
+        let variable: Result<Term<Variable, U8>, &'static str> = super::variable("abc");
+
+        assert_eq!(blank_node.is_ok(), true);
+        assert_eq!(variable.is_ok(), true);
 
         assert_eq!(named_node.id, "abc");
         assert_eq!(literal.id, "\"abc\"@123");
-        assert_eq!(blank_node.id, ":_abc");
-        assert_eq!(variable.id, "1abc");
+        assert_eq!(blank_node.unwrap().id, ":_abc");
+        assert_eq!(variable.unwrap().id, "?abc");
     }
 
     #[test]
     fn value() {
         let named_node: Term<NamedNode, U8> = super::named_node("abc");
         let literal: Term<Literal, U16> = super::literal("\"abc\"@123");
-        let blank_node: Term<BlankNode, U8> = super::blank_node("abc").unwrap();
-        let variable: Term<Variable, U8> = super::variable("1abc");
+        let blank_node: Result<Term<BlankNode, U8>, &'static str> = super::blank_node("abc");
+        let variable: Result<Term<Variable, U8>, &'static str> = super::variable("abc");
+
+        assert_eq!(blank_node.is_ok(), true);
+        assert_eq!(variable.is_ok(), true);
 
         assert_eq!(named_node.value, "abc");
         assert_eq!(literal.value, "abc");
-        assert_eq!(blank_node.value, "abc");
-        assert_eq!(variable.value, "abc");
+        assert_eq!(blank_node.unwrap().value, "abc");
+        assert_eq!(variable.unwrap().value, "abc");
     }
 
     #[test]
