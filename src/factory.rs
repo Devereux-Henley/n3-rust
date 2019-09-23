@@ -4,7 +4,7 @@
 use core::convert::TryFrom;
 use super::iri;
 use heapless::String;
-use heapless::consts::{U0, U32};
+use heapless::consts::{U0, U32, U46, U47};
 
 pub struct NamedNode;
 pub struct Literal;
@@ -28,7 +28,8 @@ pub struct Term<T, S> where S: heapless::ArrayLength<u8> {
 }
 
 impl<S> Term<Literal, S> where S: heapless::ArrayLength<u8> {
-    fn data_type_string(&self) -> &str {
+    /// Returns the id of the data type this literal wraps.
+    pub fn data_type_string(&self) -> &str {
         let last_quote_position = self.id.rfind('"');
         match last_quote_position {
             Some(index) => {
@@ -46,10 +47,13 @@ impl<S> Term<Literal, S> where S: heapless::ArrayLength<u8> {
         }
     }
 
+    /// Returns a named node for the data type this literal wraps.
     pub fn data_type(&self) -> Term<NamedNode, S> {
         named_node(self.data_type_string())
     }
 
+    /// Returns the language of this literal, if present in the id.
+    /// Language is in the id as a string preceded by the `'@'` character.
     pub fn language(&self) -> &str {
         let last_quote_position = self.id.rfind('"');
 
@@ -66,17 +70,20 @@ impl<S> Term<Literal, S> where S: heapless::ArrayLength<u8> {
     }
 }
 
+/// An enumeration of the valid terms that can comprise a [`Subject`] in a Triple or a [`Quad`].
 pub enum Subject<S> where S: heapless::ArrayLength<u8> {
     NamedNode(Term<NamedNode, S>),
     BlankNode(Term<BlankNode, S>),
     Variable(Term<Variable, S>)
 }
 
+/// An enumeration of the valid terms that can comprise a [`Predicate`] in a Triple or a [`Quad`].
 pub enum Predicate<S> where S: heapless::ArrayLength<u8> {
     NamedNode(Term<NamedNode, S>),
     Variable(Term<Variable, S>)
 }
 
+/// An enumeration of the valid terms that can comprise a [`Object`] in a Triple or a [`Quad`].
 pub enum Object<S> where S: heapless::ArrayLength<u8> {
     NamedNode(Term<NamedNode, S>),
     Literal(Term<Literal, S>),
@@ -84,6 +91,7 @@ pub enum Object<S> where S: heapless::ArrayLength<u8> {
     Variable(Term<Variable, S>)
 }
 
+/// An enumeration of the valid terms that can comprise a [`Graph`] in a [`Quad`].
 pub enum Graph<S> where S: heapless::ArrayLength<u8> {
     DefaultGraph,
     NamedNode(Term<NamedNode, S>),
@@ -91,13 +99,21 @@ pub enum Graph<S> where S: heapless::ArrayLength<u8> {
     Variable(Term<Variable, S>)
 }
 
+/// Represents a relationship ([`Predicate`]) between a [`Subject`] and an [`Object`] in a given [`Graph`].
+/// [`Quad`]s using the DefaultGraph are known as Triples.
 pub struct Quad<S, P, O, G> where S: heapless::ArrayLength<u8>, P: heapless::ArrayLength<u8>, O: heapless::ArrayLength<u8>, G: heapless::ArrayLength<u8> {
+    /// The entity that the `predicate` attribute is defined for.
+    /// [`Predicate`] relationships are usually defined for the subject in a graph.
     pub subject: Subject<S>,
 
+    /// The relationship (or attribute) defined for a given `subject` with `object` value.
     pub predicate: Predicate<P>,
 
+    /// The value supplied for the `predicate` attribute.
     pub object: Object<O>,
 
+    /// The resource (denoted by a [`Term`]) to query the defined relationship on.
+    /// The `DefaultGraph` value denotes targeting a graph based on the current context, instead of a provided [`Term`].
     pub graph: Graph<G>
 }
 
@@ -109,6 +125,7 @@ pub enum ParsedTerm<S> where S: heapless::ArrayLength<u8> {
     DefaultGraph
 }
 
+/// Finds quoted content within a string. Only looks for the first and last quote, disregarding interior quotation marks.
 fn find_quoted_content(value: &str) -> &str {
     if value.len() < 1 {
         return "";
@@ -122,14 +139,16 @@ fn find_quoted_content(value: &str) -> &str {
     }
 }
 
+/// Factory for construction of a [`NamedNode`] [`Term`] from a string id.
 pub fn named_node<'a, S>(id: &'a str) -> Term<NamedNode, S> where S: heapless::ArrayLength<u8> {
     Term { id: String::from(id), kind: NamedNode, value: String::from(id), _secret: () }
 }
 
-pub fn boolean_literal<S>(value: bool) -> Result<Term<Literal, S>, &'static str> where S: heapless::ArrayLength<u8> {
-    let mut new_id: String<S> = String::from(if value {  "\"true\"^^" } else { "\"false\"^^" });
+/// Factory for construction of a [`Literal`] [`Term`] representing positive infinity.
+pub fn positive_infinity_literal() -> Result<Term<Literal, U46>, &'static str> {
+    let mut new_id: String<U46> = String::from("\"INF\"^^");
 
-    match new_id.push_str(iri::xsd::BOOLEAN) {
+    match new_id.push_str(iri::xsd::DOUBLE) {
         Ok(_) => {
             let new_value = String::from(find_quoted_content(&new_id));
 
@@ -139,12 +158,37 @@ pub fn boolean_literal<S>(value: bool) -> Result<Term<Literal, S>, &'static str>
     }
 }
 
+/// Factory for construction of a [`Literal`] [`Term`] representing negative infinity.
+pub fn negative_infinity_literal() -> Result<Term<Literal, U47>, &'static str> {
+    let mut new_id: String<U47> = String::from("\"-INF\"^^");
+
+    new_id.push_str(iri::xsd::DOUBLE).or(Err("Literal id was not allocated enough space"))?;
+
+    let new_value = String::from(find_quoted_content(&new_id));
+
+    Ok(Term { id: new_id, kind: Literal, value: new_value, _secret: () })
+}
+
+/// Factory for construction of a [`Literal`] [`Term`] from a boolean value.
+pub fn boolean_literal<S>(value: bool) -> Result<Term<Literal, S>, &'static str> where S: heapless::ArrayLength<u8> {
+    let mut new_id: String<S> = String::from(if value {  "\"true\"^^" } else { "\"false\"^^" });
+
+    new_id.push_str(iri::xsd::BOOLEAN).or(Err("Literal id was not allocated enough space"))?;
+
+    let new_value = String::from(find_quoted_content(&new_id));
+
+    Ok(Term { id: new_id, kind: Literal, value: new_value, _secret: () })
+}
+
 pub fn literal<'a, S>(id: &'a str) -> Term<Literal, S> where S: heapless::ArrayLength<u8> {
     Term { id: String::from(id), kind: Literal, value: String::from(find_quoted_content(id)), _secret: () }
 }
 
+/// Factory for construction of a [`BlankNode`] [`Term`] from a string id.
 pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str> where S: heapless::ArrayLength<u8> {
-    static mut BLANK_NODE_COUNTER: i32 = 0;
+    // TODO Consider replacing this with a uuid. Mutation of a static counter is inherently unsafe.
+    // N3 uses a counter in current implementation, but is likely not required in specification.
+    static mut BLANK_NODE_COUNTER: u32 = 0;
 
     if id.is_empty() {
         let mut new_id: String<S> = String::from(":_n3-");
@@ -153,14 +197,11 @@ pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str
             let blank_node_str: String<U32> = String::from(BLANK_NODE_COUNTER);
             BLANK_NODE_COUNTER += 1;
 
-            return match new_id.push_str(&blank_node_str) {
-                Ok(_) =>  {
-                    let new_value = String::from(&new_id[2..]);
+            new_id.push_str(&blank_node_str).or(Err("Blank Node id was not allocated enough space."))?;
 
-                    Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () })
-                },
-                Err(_) => Err("Blank Node id was not allocated enough space.")
-            }
+            let new_value = String::from(&new_id[2..]);
+
+            return Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () });
         }
     }
 
@@ -171,34 +212,31 @@ pub fn blank_node<'a, S>(id: &'a str) -> Result<Term<BlankNode, S>, &'static str
 
     let mut new_id: String<S> = String::from(":_");
 
-    match new_id.push_str(id) {
-        Ok(_) => {
-            let new_value = String::from(&new_id[2..]);
+    new_id.push_str(id).or(Err("Blank Node id was not allocated enough space."))?;
 
-            Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () })
-        },
-        Err(_) => Err("Blank Node id was not allocated enough space.")
-    }
+    let new_value = String::from(&new_id[2..]);
+
+    Ok(Term { id: new_id, kind: BlankNode, value: new_value, _secret: () })
 }
 
+/// Factory for construction of a [`Variable`] [`Term`] from a string id.
 pub fn variable<'a, S>(id: &'a str) -> Result<Term<Variable, S>, &'static str> where S: heapless::ArrayLength<u8> {
     let mut new_id: String<S> = String::from("?");
 
-    match new_id.push_str(id) {
-        Ok(_) => {
-            let new_value = String::from(&new_id[1..]);
+    new_id.push_str(id).or(Err("Variable id was not allocated enough space."))?;
 
-            Ok(Term { id: new_id, kind: Variable, value: new_value, _secret: () })
-        },
-        Err(_) => Err("Variable id was not allocated enough space.")
-    }
+    let new_value = String::from(&new_id[1..]);
+
+    Ok(Term { id: new_id, kind: Variable, value: new_value, _secret: () })
 }
 
+/// Factory for construction of a [`Quad`] targeting the default graph, known as a Triple.
 pub fn triple<S, P, O>(subject: Subject<S>, predicate: Predicate<P>, object: Object<O>) -> Quad<S, P, O, U0>
   where S: heapless::ArrayLength<u8>, P: heapless::ArrayLength<u8>, O: heapless::ArrayLength<u8> {
     Quad { subject, predicate, object, graph: Graph::DefaultGraph }
 }
 
+/// Factory for construction of a [`Quad`].
 pub fn quad<S, P, O, G>(subject: Subject<S>, predicate: Predicate<P>, object: Object<O>, graph: Graph<G>) -> Quad<S, P, O, G>
   where S: heapless::ArrayLength<u8>, P: heapless::ArrayLength<u8>, O: heapless::ArrayLength<u8>, G: heapless::ArrayLength<u8> {
     Quad { subject, predicate, object, graph }
@@ -251,24 +289,17 @@ impl<'a, S> TryFrom<&'a str> for Term<Variable, S> where S: heapless::ArrayLengt
     }
 }
 
+/// Factory for constructing an arbitrary [`Term`] from a correctly formatted string id.
 pub fn from_id<'a, S>(id: &'a str) -> Result<ParsedTerm<S>, &'static str> where S: heapless::ArrayLength<u8> {
-    match id.chars().nth(0usize) {
-        Some('_') => {
-            match blank_node(id) {
-                Ok(node) => Ok(ParsedTerm::BlankNode(node)),
-                Err(message) => Err(message)
-            }
-        },
-        Some('?') => {
-            match variable(id) {
-                Ok(node) => Ok(ParsedTerm::Variable(node)),
-                Err(message) => Err(message)
-            }
-        },
-        Some('"') => Ok(ParsedTerm::Literal(literal(id))),
-        Some(_) => Ok(ParsedTerm::NamedNode(named_node(id))),
-        None => Ok(ParsedTerm::DefaultGraph)
-    }
+    let term = match id.chars().nth(0usize) {
+        Some('_') => ParsedTerm::BlankNode(blank_node(id)?),
+        Some('?') => ParsedTerm::Variable(variable(id)?),
+        Some('"') => ParsedTerm::Literal(literal(id)),
+        Some(_) => ParsedTerm::NamedNode(named_node(id)),
+        None => ParsedTerm::DefaultGraph
+    };
+
+    Ok(term)
 }
 
 // Tests
@@ -309,6 +340,28 @@ mod tests {
         assert_eq!(literal.value, "abc");
         assert_eq!(blank_node.unwrap().value, "abc");
         assert_eq!(variable.unwrap().value, "abc");
+    }
+
+    #[test]
+    fn positive_infinity_literal() {
+        let literal = super::positive_infinity_literal();
+
+        assert_eq!(literal.is_ok(), true);
+
+        let ok_literal = literal.unwrap();
+        assert_eq!(ok_literal.id, "\"INF\"^^http://www.w3.org/2001/XMLSchema#double");
+        assert_eq!(ok_literal.value, "INF");
+    }
+
+    #[test]
+    fn negative_infinity_literal() {
+        let literal = super::negative_infinity_literal();
+
+        assert_eq!(literal.is_ok(), true);
+
+        let ok_literal = literal.unwrap();
+        assert_eq!(ok_literal.id, "\"-INF\"^^http://www.w3.org/2001/XMLSchema#double");
+        assert_eq!(ok_literal.value, "-INF");
     }
 
     #[test]

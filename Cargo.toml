@@ -17,4 +17,7 @@ keywords = [
 
 [dependencies]
 heapless = "0.5.1"
-numtoa = "0.2.3"
+
+[dependencies.serde]
+default-features = false
+version = "1.0.101"
