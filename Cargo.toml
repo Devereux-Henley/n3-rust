@@ -19,3 +19,7 @@ keywords = [
 heapless = "0.5.1"
 numtoa = "0.2.3"
 hashbrown = "0.6.0"
+
+[dependencies.serde]
+default-features = false
+version = "1.0.101"
