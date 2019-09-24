@@ -4,4 +4,3 @@
 mod iri;
 
 mod factory;
-mod store;
