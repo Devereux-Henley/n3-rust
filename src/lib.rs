@@ -5,4 +5,4 @@ mod iri;
 
 mod factory;
 
-mod de;
+mod lexer;
