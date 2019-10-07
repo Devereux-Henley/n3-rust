@@ -16,9 +16,6 @@ pub enum Error {
     /// EOF while parsing a string.
     EofWhileParsingString,
 
-    /// EOF while parsing a comment.
-    EofWhileParsingComment,
-
     /// EOF while parsing a Turtle value.
     EofWhileParsingValue,
 
@@ -71,7 +68,6 @@ impl fmt::Display for Error {
                 Error::EofWhileParsingList => "EOF while parsing a list.",
                 Error::EofWhileParsingObject => "EOF while parsing an object.",
                 Error::EofWhileParsingString => "EOF while parsing a string.",
-                Error::EofWhileParsingComment => "EOF while parsing a comment.",
                 Error::EofWhileParsingValue => "EOF while parsing a Turtle value.",
                 Error::ExpectedColon => "Expected this character to be a `':'`.",
                 Error::ExpectedListCommaOrEnd => {
@@ -233,14 +229,13 @@ impl<'b> Lexer<'b> {
         let start = self.index;
         loop {
             match self.peek() {
-                Some(b'\n') | Some(b'\r') => {
+                Some(b'\n') | Some(b'\r') | None => {
                     let end = self.index;
                     self.eat_char();
                     return str::from_utf8(&self.slice[start..end])
                         .map_err(|_| Error::InvalidUnicodeCodePoint);
                 }
-                Some(_) => self.eat_char(),
-                None => return Err(Error::EofWhileParsingComment)
+                Some(_) => self.eat_char()
             }
         }
     }
@@ -256,7 +251,7 @@ mod tests {
 
     #[test]
     fn parse_no_comment() {
-        let slice = "# Hello World!\n".as_bytes();
+        let slice = "# Hello World!".as_bytes();
         let mut lexer = super::Lexer::new_with_options(slice, super::LexerOptions { n3: true, comments: false, line_mode: false });
 
         let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
@@ -265,7 +260,7 @@ mod tests {
 
     #[test]
     fn parse_comment() {
-        let slice = "# Hello World!\n".as_bytes();
+        let slice = "# Hello World!".as_bytes();
         let mut lexer = super::Lexer::new_with_options(slice, super::LexerOptions { n3: true, comments: true, line_mode: false });
 
         let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
