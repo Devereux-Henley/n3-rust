@@ -7,53 +7,23 @@ use heapless::consts;
 /// This type represents all possible errors that can occur when deserializing Turtle data
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    /// EOF while parsing a list.
-    EofWhileParsingList,
-
-    /// EOF while parsing an object.
-    EofWhileParsingObject,
-
-    /// EOF while parsing a string.
-    EofWhileParsingString,
-
-    /// EOF while parsing a Turtle value.
-    EofWhileParsingValue,
-
-    /// Expected this character to be a `':'`.
-    ExpectedColon,
-
-    /// Expected this character to be either a `','` or a `']'`.
-    ExpectedListCommaOrEnd,
-
-    /// Expected this character to be either a `','` or a `'}'`.
-    ExpectedObjectCommaOrEnd,
-
-    /// Expected to parse either a `true`, `false`, or a `null`.
-    ExpectedSomeIdent,
-
-    /// Expected this character to start a Turtle value.
-    ExpectedSomeValue,
-
     /// Lexer buffer wasn't large enough to parse input data.
     FailedAllocation,
+
+    /// Invalid format for blank node
+    InvalidBlankNode,
 
     /// Invalid number.
     InvalidNumber,
 
-    /// Invalid type
-    InvalidType,
-
     /// Invalid unicode code point.
     InvalidUnicodeCodePoint,
 
-    /// Object key is not a string.
-    KeyMustBeAString,
+    /// Encountered end of file before closing string character was encountered.
+    EofWhileParsingString,
 
     /// Turtle has non-whitespace trailing characters after the value.
     TrailingCharacters,
-
-    /// Turtle has a comma after the last value in an array or map.
-    TrailingComma,
 
     #[doc(hidden)]
     __Extensible,
@@ -65,37 +35,16 @@ impl fmt::Display for Error {
             f,
             "{}",
             match self {
-                Error::EofWhileParsingList => "EOF while parsing a list.",
-                Error::EofWhileParsingObject => "EOF while parsing an object.",
-                Error::EofWhileParsingString => "EOF while parsing a string.",
-                Error::EofWhileParsingValue => "EOF while parsing a Turtle value.",
-                Error::ExpectedColon => "Expected this character to be a `':'`.",
-                Error::ExpectedListCommaOrEnd => {
-                    "Expected this character to be either a `','` or\
-                     a \
-                     `']'`."
-                }
-                Error::ExpectedObjectCommaOrEnd => {
-                    "Expected this character to be either a `','` \
-                     or a \
-                     `'}'`."
-                }
-                Error::ExpectedSomeIdent => {
-                    "Expected to parse either a `true`, `false`, or a \
-                     `null`."
-                }
-                Error::ExpectedSomeValue => "Expected this character to start a Turtle value.",
                 Error::FailedAllocation => "Token buffer for Lexer was not allocated enough space",
+                Error::InvalidBlankNode => "Blank node was not correctly formatted.",
                 Error::InvalidNumber => "Invalid number.",
-                Error::InvalidType => "Invalid type",
                 Error::InvalidUnicodeCodePoint => "Invalid unicode code point.",
-                Error::KeyMustBeAString => "Object key is not a string.",
+                Error::EofWhileParsingString => "File ended before ending \" was found.",
                 Error::TrailingCharacters => {
                     "Turtle has non-whitespace trailing characters after \
                      the \
                      value."
-                }
-                Error::TrailingComma => "Turtle has a comma after the last value in an array or map.",
+                },
                 _ => "Invalid Turtle",
             }
         )
@@ -159,6 +108,18 @@ impl<'b> Lexer<'b> {
                         result.push(LexerToken::Comment(LexerTokenData { prefix: "", token_type: "comment", value: comment, line: 0 })).or(Err(Error::FailedAllocation))?
                     }
                 },
+                Some(b'_') => {
+                    self.eat_char();
+                    match self.peek() {
+                        Some(b':') => {
+                            self.eat_char();
+                            let node = self.parse_blank_node()?;
+
+                            result.push(LexerToken::Blank(LexerTokenData { prefix: "_", token_type: "blank", value: node, line: 0 })).or(Err(Error::FailedAllocation))?
+                        },
+                        _ => return Err(Error::InvalidBlankNode)
+                    }
+                },
                 Some(_) => return Err(Error::TrailingCharacters),
                 None => return Ok(result)
             }
@@ -202,16 +163,6 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    fn parse_ident(&mut self, ident: &[u8]) -> Result<(), Error> {
-        for c in ident {
-            if Some(*c) != self.next_char() {
-                return Err(Error::ExpectedSomeIdent);
-            }
-        }
-
-        Ok(())
-    }
-
     fn parse_whitespace(&mut self) -> Option<u8> {
         loop {
             match self.peek() {
@@ -235,6 +186,45 @@ impl<'b> Lexer<'b> {
                     return str::from_utf8(&self.slice[start..end])
                         .map_err(|_| Error::InvalidUnicodeCodePoint);
                 }
+                Some(_) => self.eat_char()
+            }
+        }
+    }
+
+    fn parse_blank_node(&mut self) -> Result<&'b str, Error> {
+        let start = self.index;
+        loop {
+            match self.peek() {
+                None
+                    | Some(b'\t')
+                    | Some(b'.')
+                    | Some(b',')
+                    | Some(b';')
+                    | Some(b':')
+                    | Some(b' ')
+                    | Some(b'\n')
+                    | Some(b'\r')
+                    | Some(b'#')
+                    | Some(b'(')
+                    | Some(b')')
+                    | Some(b'[')
+                    | Some(b']')
+                    | Some(b'{')
+                    | Some(b'}')
+                    | Some(b'"')
+                    | Some(b'\'')
+                    | Some(b'<') => {
+                        let end = self.index;
+
+                        // If first character found was end delimiter, blank node is invalid.
+                        if start == end {
+                            return Err(Error::InvalidBlankNode);
+                        }
+
+                        self.eat_char();
+                        return str::from_utf8(&self.slice[start..end])
+                            .map_err(|_| Error::InvalidUnicodeCodePoint);
+                    }
                 Some(_) => self.eat_char()
             }
         }
@@ -295,5 +285,40 @@ mod tests {
         };
 
         assert_eq!(parse_result_two.value, " World!");
+    }
+
+    #[test]
+    fn parse_blank_node() {
+        let slice = "_:test".as_bytes();
+        let mut lexer = super::Lexer::new(slice);
+
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
+
+        let parse_result = match &vec[0] {
+            super::LexerToken::Blank(data) => data,
+            _ => panic!("First token was not a blank node.")
+        };
+
+        assert_eq!(parse_result.value, "test");
+    }
+
+    #[test]
+    fn parse_blank_node_invalid_semicolon() {
+        let slice = "_test".as_bytes();
+        let mut lexer = super::Lexer::new(slice);
+
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = lexer.tokenize_to_end();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_blank_node_invalid_content() {
+        let slice = "_:".as_bytes();
+        let mut lexer = super::Lexer::new(slice);
+
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = lexer.tokenize_to_end();
+
+        assert!(result.is_err());
     }
 }
