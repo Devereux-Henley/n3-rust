@@ -1,6 +1,7 @@
 use super::iri;
 use super::factory;
 use core::{fmt, str};
+use core::str::{Chars, CharIndices};
 use heapless::{Vec};
 use heapless::consts;
 
@@ -57,10 +58,10 @@ pub(crate) struct LexerOptions {
     pub n3: bool,
 }
 
-pub(crate) struct Lexer<'b> {
+struct Lexer<'b> {
     options: LexerOptions,
-    slice: &'b [u8],
-    index: usize,
+    slice: &'b str,
+    iter: CharIndices<'b>,
 }
 
 pub(crate) struct LexerTokenData<'b> {
@@ -87,12 +88,12 @@ pub(crate) enum LexerToken<'b> {
 }
 
 impl<'b> Lexer<'b> {
-    fn new(slice: &'b [u8]) -> Lexer<'_> {
-        Lexer { slice, index: 0, options: LexerOptions { line_mode: false, comments: false, n3: true } }
+    fn new(slice: &'b str, iter: CharIndices<'b>) -> Lexer<'b> {
+        Lexer { slice, iter, options: LexerOptions { line_mode: false, comments: false, n3: true } }
     }
 
-    fn new_with_options(slice: &'b [u8], options: LexerOptions) -> Lexer<'_> {
-        Lexer { slice, index: 0, options }
+    fn new_with_options(slice: &'b str, iter: CharIndices<'b>, options: LexerOptions) -> Lexer<'b> {
+        Lexer { slice, iter, options }
     }
 
     pub fn tokenize_to_end<T>(&mut self) -> Result<Vec<LexerToken<'b>, T>, Error> where T: heapless::ArrayLength<LexerToken<'b>> {
@@ -100,19 +101,16 @@ impl<'b> Lexer<'b> {
 
         loop {
             match self.parse_whitespace() {
-                Some(b'#') => {
-                    self.eat_char();
+                Some('#') => {
                     let comment = self.parse_comment()?;
 
                     if self.options.comments {
                         result.push(LexerToken::Comment(LexerTokenData { prefix: "", token_type: "comment", value: comment, line: 0 })).or(Err(Error::FailedAllocation))?
                     }
                 },
-                Some(b'_') => {
-                    self.eat_char();
-                    match self.peek() {
-                        Some(b':') => {
-                            self.eat_char();
+                Some('_') => {
+                    match self.iter.next() {
+                        Some((_, ':')) => {
                             let node = self.parse_blank_node()?;
 
                             result.push(LexerToken::Blank(LexerTokenData { prefix: "_", token_type: "blank", value: node, line: 0 })).or(Err(Error::FailedAllocation))?
@@ -126,113 +124,110 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    fn eat_char(&mut self) {
-        self.index += 1;
-    }
-
-    fn end(&mut self) -> Result<(), Error> {
-        match self.parse_whitespace() {
-            Some(_) => Err(Error::TrailingCharacters),
-            None => Ok(()),
-        }
-    }
-
-    fn next_char(&mut self) -> Option<u8> {
-        let character = self.slice.get(self.index);
-
-        if character.is_some() {
-            self.index += 1;
-        }
-
-        character.cloned()
-    }
-
     fn parse_str(&mut self) -> Result<&'b str, Error> {
-        let start = self.index;
+        let mut elements_traversed = 0;
         loop {
-            match self.peek() {
-                Some(b'"') => {
-                    let end = self.index;
-                    self.eat_char();
-                    return str::from_utf8(&self.slice[start..end])
-                        .map_err(|_| Error::InvalidUnicodeCodePoint);
+            match self.iter.next() {
+                Some((end, '"')) => {
+                    let start = end - elements_traversed;
+
+                    return Ok(&self.slice[start..end]);
                 }
-                Some(_) => self.eat_char(),
+                Some((_, _)) => elements_traversed += 1,
                 None => return Err(Error::EofWhileParsingString),
             }
         }
     }
 
-    fn parse_whitespace(&mut self) -> Option<u8> {
+    fn parse_whitespace(&mut self) -> Option<char> {
         loop {
-            match self.peek() {
-                Some(b' ') | Some(b'\n') | Some(b'\t') | Some(b'\r') => {
-                    self.eat_char();
-                }
-                other => {
-                    return other;
-                }
+            match self.iter.next() {
+                Some((_, ' ')) | Some((_, '\n')) | Some((_, '\t')) | Some((_, '\r')) => continue,
+                Some((_, character)) => {
+                    return Some(character);
+                },
+                None => return None
             }
         }
     }
 
     fn parse_comment(&mut self) -> Result<&'b str, Error> {
-        let start = self.index;
+        let mut elements_traversed = 0;
         loop {
-            match self.peek() {
-                Some(b'\n') | Some(b'\r') | None => {
-                    let end = self.index;
-                    self.eat_char();
-                    return str::from_utf8(&self.slice[start..end])
-                        .map_err(|_| Error::InvalidUnicodeCodePoint);
-                }
-                Some(_) => self.eat_char()
+            match self.iter.next() {
+                Some((end, '\n')) | Some((end, '\r')) => {
+                    let start = end - elements_traversed;
+                    return Ok(&self.slice[start..end]);
+                },
+                None => {
+                    let end = self.slice.len();
+                    let start = end - elements_traversed;
+                    return Ok(&self.slice[start..end]);
+                },
+                Some(_) => elements_traversed += 1
             }
         }
     }
 
     fn parse_blank_node(&mut self) -> Result<&'b str, Error> {
-        let start = self.index;
+        let mut elements_traversed = 0;
         loop {
-            match self.peek() {
-                None
-                    | Some(b'\t')
-                    | Some(b'.')
-                    | Some(b',')
-                    | Some(b';')
-                    | Some(b':')
-                    | Some(b' ')
-                    | Some(b'\n')
-                    | Some(b'\r')
-                    | Some(b'#')
-                    | Some(b'(')
-                    | Some(b')')
-                    | Some(b'[')
-                    | Some(b']')
-                    | Some(b'{')
-                    | Some(b'}')
-                    | Some(b'"')
-                    | Some(b'\'')
-                    | Some(b'<') => {
-                        let end = self.index;
+            match self.iter.next() {
+                    Some((end, '\t'))
+                    | Some((end, '.'))
+                    | Some((end, ','))
+                    | Some((end, ';'))
+                    | Some((end, ':'))
+                    | Some((end, ' '))
+                    | Some((end, '\n'))
+                    | Some((end, '\r'))
+                    | Some((end, '#'))
+                    | Some((end, '('))
+                    | Some((end, ')'))
+                    | Some((end, '['))
+                    | Some((end, ']'))
+                    | Some((end, '{'))
+                    | Some((end, '}'))
+                    | Some((end, '"'))
+                    | Some((end, '\''))
+                    | Some((end, '<')) => {
+                        let start = end - elements_traversed;
 
                         // If first character found was end delimiter, blank node is invalid.
                         if start == end {
                             return Err(Error::InvalidBlankNode);
                         }
 
-                        self.eat_char();
-                        return str::from_utf8(&self.slice[start..end])
-                            .map_err(|_| Error::InvalidUnicodeCodePoint);
+                        return Ok(&self.slice[start..end]);
+                    },
+                None => {
+                    let end = self.slice.len();
+                    let start = end - elements_traversed;
+                    // If first character found was end delimiter, blank node is invalid.
+                    if start == end {
+                        return Err(Error::InvalidBlankNode);
                     }
-                Some(_) => self.eat_char()
+
+                    return Ok(&self.slice[start..end]);
+                }
+                Some(_) => elements_traversed += 1
             }
         }
     }
+}
 
-    fn peek(&mut self) -> Option<u8> {
-        self.slice.get(self.index).cloned()
-    }
+pub(crate) fn tokenize_input<'b, S>(slice: &'b str) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
+    let indices = slice.char_indices();
+    let mut lexer: Lexer<'b> = Lexer::new(slice, indices);
+    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.tokenize_to_end();
+    return result;
+}
+
+pub(crate) fn tokenize_input_with_options<'b, S>(slice: &'b str, options: LexerOptions) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
+    let indices = slice.char_indices();
+    let mut lexer: Lexer<'b> = Lexer::new_with_options(slice, indices, options);
+    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.tokenize_to_end();
+    return result;
 }
 
 #[cfg(test)]
@@ -241,19 +236,15 @@ mod tests {
 
     #[test]
     fn parse_no_comment() {
-        let slice = "# Hello World!".as_bytes();
-        let mut lexer = super::Lexer::new_with_options(slice, super::LexerOptions { n3: true, comments: false, line_mode: false });
-
-        let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
+        let slice = "# Hello World!";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice).unwrap();
         assert_eq!(vec.len(), 0);
     }
 
     #[test]
     fn parse_comment() {
-        let slice = "# Hello World!".as_bytes();
-        let mut lexer = super::Lexer::new_with_options(slice, super::LexerOptions { n3: true, comments: true, line_mode: false });
-
-        let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
+        let slice = "# Hello World!";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input_with_options(slice, super::LexerOptions { comments: true, n3: true, line_mode: false }).unwrap();
         assert_eq!(vec.len(), 1);
 
         let parse_result = match &vec[0] {
@@ -266,10 +257,8 @@ mod tests {
 
     #[test]
     fn parse_comments() {
-        let slice = "# Hello \n # World!\n".as_bytes();
-        let mut lexer = super::Lexer::new_with_options(slice, super::LexerOptions { n3: true, comments: true, line_mode: false });
-
-        let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
+        let slice = "# Hello \n # World!\n";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input_with_options(slice, super::LexerOptions { comments: true, n3: true, line_mode: false }).unwrap();
         assert_eq!(vec.len(), 2);
 
         let parse_result_one = match &vec[0] {
@@ -289,10 +278,8 @@ mod tests {
 
     #[test]
     fn parse_blank_node() {
-        let slice = "_:test".as_bytes();
-        let mut lexer = super::Lexer::new(slice);
-
-        let vec: heapless::Vec<super::LexerToken, consts::U64> = lexer.tokenize_to_end().unwrap();
+        let slice = "_:test";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice).unwrap();
 
         let parse_result = match &vec[0] {
             super::LexerToken::Blank(data) => data,
@@ -304,20 +291,16 @@ mod tests {
 
     #[test]
     fn parse_blank_node_invalid_semicolon() {
-        let slice = "_test".as_bytes();
-        let mut lexer = super::Lexer::new(slice);
-
-        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = lexer.tokenize_to_end();
+        let slice = "_test";
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_blank_node_invalid_content() {
-        let slice = "_:".as_bytes();
-        let mut lexer = super::Lexer::new(slice);
-
-        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = lexer.tokenize_to_end();
+        let slice = "_:";
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
 
         assert!(result.is_err());
     }
