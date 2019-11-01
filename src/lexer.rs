@@ -171,6 +171,28 @@ impl<'b> Lexer<'b> {
 
     fn parse_blank_node(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+
+        // TODO Add support for surrogate unicode point prefix. [\u{d800} ..= \u{db7f}] followed by [\u{dc00} ..= \u{dfff}]
+        // Match valid starting characters.
+        match self.iter.next() {
+            Some((_, '0' ..= '9'))
+                | Some((_, 'A' ..= 'Z'))
+                | Some((_, 'a' ..= 'z'))
+                | Some((_, '_'))
+                | Some((_, '\u{c0}' ..= '\u{d6}'))
+                | Some((_, '\u{d8}' ..= '\u{f6}'))
+                | Some((_, '\u{f8}' ..= '\u{02ff}'))
+                | Some((_, '\u{0370}' ..= '\u{037d}'))
+                | Some((_, '\u{037f}' ..= '\u{1fff}'))
+                | Some((_, '\u{200c}' ..= '\u{200d}'))
+                | Some((_, '\u{2070}' ..= '\u{218f}'))
+                | Some((_, '\u{2c00}' ..= '\u{2fef}'))
+                | Some((_, '\u{3001}' ..= '\u{d7ff}'))
+                | Some((_, '\u{f900}' ..= '\u{fdcf}'))
+                | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+            _ => return Err(Error::InvalidBlankNode)
+        }
+
         loop {
             match self.iter.next() {
                     Some((end, '\t'))
@@ -193,24 +215,32 @@ impl<'b> Lexer<'b> {
                     | Some((end, '<')) => {
                         let start = end - elements_traversed;
 
-                        // If first character found was end delimiter, blank node is invalid.
-                        if start == end {
-                            return Err(Error::InvalidBlankNode);
-                        }
-
                         return Ok(&self.slice[start..end]);
                     },
                 None => {
                     let end = self.slice.len();
                     let start = end - elements_traversed;
-                    // If first character found was end delimiter, blank node is invalid.
-                    if start == end {
-                        return Err(Error::InvalidBlankNode);
-                    }
 
                     return Ok(&self.slice[start..end]);
                 }
-                Some(_) => elements_traversed += 1
+                Some((_, '0' ..= '9'))
+                    | Some((_, 'A' ..= 'Z'))
+                    | Some((_, 'a' ..= 'z'))
+                    | Some((_, '_'))
+                    | Some((_, '-'))
+                    | Some((_, '\u{b7}'))
+                    | Some((_, '\u{c0}' ..= '\u{d6}'))
+                    | Some((_, '\u{d8}' ..= '\u{f6}'))
+                    | Some((_, '\u{f8}' ..= '\u{02ff}'))
+                    | Some((_, '\u{0370}' ..= '\u{037d}'))
+                    | Some((_, '\u{037f}' ..= '\u{1fff}'))
+                    | Some((_, '\u{200c}' ..= '\u{200d}'))
+                    | Some((_, '\u{2070}' ..= '\u{218f}'))
+                    | Some((_, '\u{2c00}' ..= '\u{2fef}'))
+                    | Some((_, '\u{3001}' ..= '\u{d7ff}'))
+                    | Some((_, '\u{f900}' ..= '\u{fdcf}'))
+                    | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+                _ => return Err(Error::InvalidBlankNode)
             }
         }
     }
