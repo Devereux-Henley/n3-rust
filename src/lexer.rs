@@ -1,7 +1,8 @@
 use super::iri;
 use super::factory;
 use core::{fmt, str};
-use core::str::{Chars, CharIndices};
+use core::str::{CharIndices};
+use core::iter::{FromIterator, Iterator};
 use heapless::{Vec};
 use heapless::consts;
 
@@ -14,11 +15,14 @@ pub enum Error {
     /// Invalid format for blank node
     InvalidBlankNode,
 
+    /// Invalid format for variable
+    InvalidVariable,
+
+    /// Invalid format for keyword
+    InvalidKeyword,
+
     /// Invalid number.
     InvalidNumber,
-
-    /// Invalid unicode code point.
-    InvalidUnicodeCodePoint,
 
     /// Encountered end of file before closing string character was encountered.
     EofWhileParsingString,
@@ -38,8 +42,9 @@ impl fmt::Display for Error {
             match self {
                 Error::FailedAllocation => "Token buffer for Lexer was not allocated enough space",
                 Error::InvalidBlankNode => "Blank node was not correctly formatted.",
+                Error::InvalidVariable => "Variable was not correctly formatted",
+                Error::InvalidKeyword => "Keyword was not correctly formatted",
                 Error::InvalidNumber => "Invalid number.",
-                Error::InvalidUnicodeCodePoint => "Invalid unicode code point.",
                 Error::EofWhileParsingString => "File ended before ending \" was found.",
                 Error::TrailingCharacters => {
                     "Turtle has non-whitespace trailing characters after \
@@ -79,6 +84,7 @@ pub(crate) enum LexerToken<'b> {
     Inverse(LexerTokenData<'b>),
     Blank(LexerTokenData<'b>),
     Literal(LexerTokenData<'b>),
+    Keyword(LexerTokenData<'b>),
     Variable(LexerTokenData<'b>),
     LangCode(LexerTokenData<'b>),
     Period(LexerTokenData<'b>),
@@ -94,34 +100,6 @@ impl<'b> Lexer<'b> {
 
     fn new_with_options(slice: &'b str, iter: CharIndices<'b>, options: LexerOptions) -> Lexer<'b> {
         Lexer { slice, iter, options }
-    }
-
-    pub fn tokenize_to_end<T>(&mut self) -> Result<Vec<LexerToken<'b>, T>, Error> where T: heapless::ArrayLength<LexerToken<'b>> {
-        let mut result: Vec<LexerToken, T> = Vec::new();
-
-        loop {
-            match self.parse_whitespace() {
-                Some('#') => {
-                    let comment = self.parse_comment()?;
-
-                    if self.options.comments {
-                        result.push(LexerToken::Comment(LexerTokenData { prefix: "", token_type: "comment", value: comment, line: 0 })).or(Err(Error::FailedAllocation))?
-                    }
-                },
-                Some('_') => {
-                    match self.iter.next() {
-                        Some((_, ':')) => {
-                            let node = self.parse_blank_node()?;
-
-                            result.push(LexerToken::Blank(LexerTokenData { prefix: "_", token_type: "blank", value: node, line: 0 })).or(Err(Error::FailedAllocation))?
-                        },
-                        _ => return Err(Error::InvalidBlankNode)
-                    }
-                },
-                Some(_) => return Err(Error::TrailingCharacters),
-                None => return Ok(result)
-            }
-        }
     }
 
     fn parse_str(&mut self) -> Result<&'b str, Error> {
@@ -195,7 +173,7 @@ impl<'b> Lexer<'b> {
 
         loop {
             match self.iter.next() {
-                    Some((end, '\t'))
+                Some((end, '\t'))
                     | Some((end, '.'))
                     | Some((end, ','))
                     | Some((end, ';'))
@@ -244,19 +222,151 @@ impl<'b> Lexer<'b> {
             }
         }
     }
+
+    fn parse_keyword(&mut self) -> Result<&'b str, Error> {
+        let mut elements_traversed = 0;
+        loop {
+            match self.iter.next() {
+                Some((_, 'a' ..= 'z'))
+                    | Some((_, 'A' ..= 'Z')) => elements_traversed += 1,
+                Some((end, ' '))
+                    | Some((end, '\r'))
+                    | Some((end, '\n'))
+                    | Some((end, '#'))
+                    | Some((end, '<')) => {
+                        let start = end - elements_traversed;
+
+                        return Ok(&self.slice[start..end]);
+                    }
+                _ => return Err(Error::InvalidKeyword)
+            }
+        }
+    }
+
+    fn parse_variable(&mut self) -> Result<&'b str, Error> {
+        let mut elements_traversed = 0;
+
+        // TODO Add support for surrogate unicode point prefix. [\u{d800} ..= \u{db7f}] followed by [\u{dc00} ..= \u{dfff}]
+        // Match valid starting characters.
+        match self.iter.next() {
+            Some((_, 'A' ..= 'Z'))
+                | Some((_, 'a' ..= 'z'))
+                | Some((_, '_'))
+                | Some((_, '\u{c0}' ..= '\u{d6}'))
+                | Some((_, '\u{d8}' ..= '\u{f6}'))
+                | Some((_, '\u{f8}' ..= '\u{02ff}'))
+                | Some((_, '\u{0370}' ..= '\u{037d}'))
+                | Some((_, '\u{037f}' ..= '\u{1fff}'))
+                | Some((_, '\u{200c}' ..= '\u{200d}'))
+                | Some((_, '\u{2070}' ..= '\u{218f}'))
+                | Some((_, '\u{2c00}' ..= '\u{2fef}'))
+                | Some((_, '\u{3001}' ..= '\u{d7ff}'))
+                | Some((_, '\u{f900}' ..= '\u{fdcf}'))
+                | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+            _ => return Err(Error::InvalidVariable)
+        }
+
+        loop {
+            match self.iter.next() {
+                Some((end, '\t'))
+                    | Some((end, '.'))
+                    | Some((end, ','))
+                    | Some((end, ';'))
+                    | Some((end, '!'))
+                    | Some((end, '^'))
+                    | Some((end, ' '))
+                    | Some((end, '\n'))
+                    | Some((end, '\r'))
+                    | Some((end, '#'))
+                    | Some((end, '('))
+                    | Some((end, ')'))
+                    | Some((end, '['))
+                    | Some((end, ']'))
+                    | Some((end, '{'))
+                    | Some((end, '}'))
+                    | Some((end, '"'))
+                    | Some((end, '\''))
+                    | Some((end, '<')) => {
+                        let start = end - elements_traversed;
+
+                        return Ok(&self.slice[start..end]);
+                    },
+                None => {
+                    let end = self.slice.len();
+                    let start = end - elements_traversed;
+
+                    return Ok(&self.slice[start..end]);
+                }
+                Some((_, '0' ..= ':'))
+                    | Some((_, 'A' ..= 'Z'))
+                    | Some((_, 'a' ..= 'z'))
+                    | Some((_, '_'))
+                    | Some((_, '-'))
+                    | Some((_, '\u{b7}'))
+                    | Some((_, '\u{c0}' ..= '\u{d6}'))
+                    | Some((_, '\u{d8}' ..= '\u{f6}'))
+                    | Some((_, '\u{f8}' ..= '\u{02ff}'))
+                    | Some((_, '\u{0370}' ..= '\u{037d}'))
+                    | Some((_, '\u{037f}' ..= '\u{1fff}'))
+                    | Some((_, '\u{200c}' ..= '\u{200d}'))
+                    | Some((_, '\u{2070}' ..= '\u{218f}'))
+                    | Some((_, '\u{2c00}' ..= '\u{2fef}'))
+                    | Some((_, '\u{3001}' ..= '\u{d7ff}'))
+                    | Some((_, '\u{f900}' ..= '\u{fdcf}'))
+                    | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+                _ => return Err(Error::InvalidVariable)
+            }
+        }
+    }
+}
+
+impl <'b> Iterator for Lexer<'b> {
+    type Item = Result<LexerToken<'b>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Loop to allow fallthrough when options prevent token emission.
+        loop {
+            match self.parse_whitespace() {
+                Some('#') => {
+                    let comment_result = self.parse_comment();
+
+                    if self.options.comments {
+                        return Some(comment_result.map(|comment| LexerToken::Comment(LexerTokenData { prefix: "", token_type: "comment", value: comment, line: 0 })))
+                    }
+                },
+                Some('_') => {
+                    match self.iter.next() {
+                        Some((_, ':')) => {
+                            return Some(self.parse_blank_node().map(|node| LexerToken::Blank(LexerTokenData { prefix: "_", token_type: "blank", value: node, line: 0 })));
+                        },
+                        _ => return Some(Err(Error::InvalidBlankNode))
+                    }
+                },
+                Some('@') => {
+                    // TODO Add langCode support.
+                    return Some(self.parse_keyword().map(|keyword| LexerToken::Keyword(LexerTokenData { prefix: "@", token_type: keyword, value: keyword, line: 0})));
+                },
+                Some('?') => {
+                    return Some(self.parse_variable().map(|variable| LexerToken::Variable(LexerTokenData { prefix: "?", token_type: "var", value: variable, line: 0})));
+                },
+                Some(_) => return Some(Err(Error::TrailingCharacters)),
+                None => return None
+            }
+        }
+    }
 }
 
 pub(crate) fn tokenize_input<'b, S>(slice: &'b str) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
     let indices = slice.char_indices();
-    let mut lexer: Lexer<'b> = Lexer::new(slice, indices);
-    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.tokenize_to_end();
+    let lexer: Lexer<'b> = Lexer::new(slice, indices);
+    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.collect();
     return result;
 }
 
 pub(crate) fn tokenize_input_with_options<'b, S>(slice: &'b str, options: LexerOptions) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
     let indices = slice.char_indices();
-    let mut lexer: Lexer<'b> = Lexer::new_with_options(slice, indices, options);
-    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.tokenize_to_end();
+    let lexer: Lexer<'b> = Lexer::new_with_options(slice, indices, options);
+    let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.collect();
     return result;
 }
 
@@ -320,6 +430,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_keyword() {
+        let slice = "@test ";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice).unwrap();
+
+        let parse_result = match &vec[0] {
+            super::LexerToken::Keyword(data) => data,
+            _ => panic!("First token was not a keyword.")
+        };
+
+        assert_eq!(parse_result.value, "test");
+    }
+
+    #[test]
+    fn parse_keyword_invalid_content() {
+        let slice = "@test123 ";
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_variable() {
+        let slice = "?test";
+        let vec: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice).unwrap();
+
+        let parse_result = match &vec[0] {
+            super::LexerToken::Variable(data) => data,
+            _ => panic!("First token was not a variable.")
+        };
+
+        assert_eq!(parse_result.value, "test");
+    }
+
+    #[test]
+    fn parse_variable_no_content() {
+        let slice = "?";
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_variable_invalid_content() {
+        let slice = "?0";
+        let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn parse_blank_node_invalid_semicolon() {
         let slice = "_test";
         let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
@@ -329,9 +489,22 @@ mod tests {
 
     #[test]
     fn parse_blank_node_invalid_content() {
-        let slice = "_:";
+        let slice = "_:\u{b7}";
         let result: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_blank_node_no_content() {
+        let slice_one = "_:";
+        let result_one: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice_one);
+
+        assert!(result_one.is_err());
+
+        let slice_two = "_";
+        let result_two: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice_two);
+
+        assert!(result_two.is_err());
     }
 }
