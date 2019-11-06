@@ -1,7 +1,7 @@
 use super::iri;
 use super::factory;
 use core::{fmt, str};
-use core::str::{CharIndices};
+use core::str::{Chars};
 use core::iter::{FromIterator, Iterator};
 use heapless::{Vec};
 use heapless::consts;
@@ -65,8 +65,7 @@ pub(crate) struct LexerOptions {
 
 struct Lexer<'b> {
     options: LexerOptions,
-    slice: &'b str,
-    iter: CharIndices<'b>,
+    iter: Chars<'b>,
 }
 
 pub(crate) struct LexerTokenData<'b> {
@@ -94,24 +93,23 @@ pub(crate) enum LexerToken<'b> {
 }
 
 impl<'b> Lexer<'b> {
-    fn new(slice: &'b str, iter: CharIndices<'b>) -> Lexer<'b> {
-        Lexer { slice, iter, options: LexerOptions { line_mode: false, comments: false, n3: true } }
+    fn new(iter: Chars<'b>) -> Lexer<'b> {
+        Lexer { iter, options: LexerOptions { line_mode: false, comments: false, n3: true } }
     }
 
-    fn new_with_options(slice: &'b str, iter: CharIndices<'b>, options: LexerOptions) -> Lexer<'b> {
-        Lexer { slice, iter, options }
+    fn new_with_options(iter: Chars<'b>, options: LexerOptions) -> Lexer<'b> {
+        Lexer { iter, options }
     }
 
     fn parse_str(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+        let slice = self.iter.as_str();
         loop {
             match self.iter.next() {
-                Some((end, '"')) => {
-                    let start = end - elements_traversed;
-
-                    return Ok(&self.slice[start..end]);
+                Some('"') => {
+                    return Ok(&slice[..elements_traversed]);
                 }
-                Some((_, _)) => elements_traversed += 1,
+                Some(_) => elements_traversed += 1,
                 None => return Err(Error::EofWhileParsingString),
             }
         }
@@ -120,8 +118,8 @@ impl<'b> Lexer<'b> {
     fn parse_whitespace(&mut self) -> Option<char> {
         loop {
             match self.iter.next() {
-                Some((_, ' ')) | Some((_, '\n')) | Some((_, '\t')) | Some((_, '\r')) => continue,
-                Some((_, character)) => {
+                Some(' ') | Some('\n') | Some('\t') | Some('\r') => continue,
+                Some(character) => {
                     return Some(character);
                 },
                 None => return None
@@ -131,16 +129,14 @@ impl<'b> Lexer<'b> {
 
     fn parse_comment(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+        let slice = self.iter.as_str();
         loop {
             match self.iter.next() {
-                Some((end, '\n')) | Some((end, '\r')) => {
-                    let start = end - elements_traversed;
-                    return Ok(&self.slice[start..end]);
+                Some('\n') | Some('\r') => {
+                    return Ok(&slice[..elements_traversed]);
                 },
                 None => {
-                    let end = self.slice.len();
-                    let start = end - elements_traversed;
-                    return Ok(&self.slice[start..end]);
+                    return Ok(&slice[..elements_traversed]);
                 },
                 Some(_) => elements_traversed += 1
             }
@@ -149,75 +145,71 @@ impl<'b> Lexer<'b> {
 
     fn parse_blank_node(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+        let slice = self.iter.as_str();
 
         // TODO Add support for surrogate unicode point prefix. [\u{d800} ..= \u{db7f}] followed by [\u{dc00} ..= \u{dfff}]
         // Match valid starting characters.
         match self.iter.next() {
-            Some((_, '0' ..= '9'))
-                | Some((_, 'A' ..= 'Z'))
-                | Some((_, 'a' ..= 'z'))
-                | Some((_, '_'))
-                | Some((_, '\u{c0}' ..= '\u{d6}'))
-                | Some((_, '\u{d8}' ..= '\u{f6}'))
-                | Some((_, '\u{f8}' ..= '\u{02ff}'))
-                | Some((_, '\u{0370}' ..= '\u{037d}'))
-                | Some((_, '\u{037f}' ..= '\u{1fff}'))
-                | Some((_, '\u{200c}' ..= '\u{200d}'))
-                | Some((_, '\u{2070}' ..= '\u{218f}'))
-                | Some((_, '\u{2c00}' ..= '\u{2fef}'))
-                | Some((_, '\u{3001}' ..= '\u{d7ff}'))
-                | Some((_, '\u{f900}' ..= '\u{fdcf}'))
-                | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+            Some('0' ..= '9')
+                | Some('A' ..= 'Z')
+                | Some('a' ..= 'z')
+                | Some('_')
+                | Some('\u{c0}' ..= '\u{d6}')
+                | Some('\u{d8}' ..= '\u{f6}')
+                | Some('\u{f8}' ..= '\u{02ff}')
+                | Some('\u{0370}' ..= '\u{037d}')
+                | Some('\u{037f}' ..= '\u{1fff}')
+                | Some('\u{200c}' ..= '\u{200d}')
+                | Some('\u{2070}' ..= '\u{218f}')
+                | Some('\u{2c00}' ..= '\u{2fef}')
+                | Some('\u{3001}' ..= '\u{d7ff}')
+                | Some('\u{f900}' ..= '\u{fdcf}')
+                | Some('\u{fdf0}' ..= '\u{fffd}') => elements_traversed += 1,
             _ => return Err(Error::InvalidBlankNode)
         }
 
         loop {
             match self.iter.next() {
-                Some((end, '\t'))
-                    | Some((end, '.'))
-                    | Some((end, ','))
-                    | Some((end, ';'))
-                    | Some((end, ':'))
-                    | Some((end, ' '))
-                    | Some((end, '\n'))
-                    | Some((end, '\r'))
-                    | Some((end, '#'))
-                    | Some((end, '('))
-                    | Some((end, ')'))
-                    | Some((end, '['))
-                    | Some((end, ']'))
-                    | Some((end, '{'))
-                    | Some((end, '}'))
-                    | Some((end, '"'))
-                    | Some((end, '\''))
-                    | Some((end, '<')) => {
-                        let start = end - elements_traversed;
-
-                        return Ok(&self.slice[start..end]);
+                Some('\t')
+                    | Some('.')
+                    | Some(',')
+                    | Some(';')
+                    | Some(':')
+                    | Some(' ')
+                    | Some('\n')
+                    | Some('\r')
+                    | Some('#')
+                    | Some('(')
+                    | Some(')')
+                    | Some('[')
+                    | Some(']')
+                    | Some('{')
+                    | Some('}')
+                    | Some('"')
+                    | Some('\'')
+                    | Some('<') => {
+                        return Ok(&slice[..elements_traversed]);
                     },
                 None => {
-                    let end = self.slice.len();
-                    let start = end - elements_traversed;
-
-                    return Ok(&self.slice[start..end]);
+                    return Ok(&slice[..elements_traversed]);
                 }
-                Some((_, '0' ..= '9'))
-                    | Some((_, 'A' ..= 'Z'))
-                    | Some((_, 'a' ..= 'z'))
-                    | Some((_, '_'))
-                    | Some((_, '-'))
-                    | Some((_, '\u{b7}'))
-                    | Some((_, '\u{c0}' ..= '\u{d6}'))
-                    | Some((_, '\u{d8}' ..= '\u{f6}'))
-                    | Some((_, '\u{f8}' ..= '\u{02ff}'))
-                    | Some((_, '\u{0370}' ..= '\u{037d}'))
-                    | Some((_, '\u{037f}' ..= '\u{1fff}'))
-                    | Some((_, '\u{200c}' ..= '\u{200d}'))
-                    | Some((_, '\u{2070}' ..= '\u{218f}'))
-                    | Some((_, '\u{2c00}' ..= '\u{2fef}'))
-                    | Some((_, '\u{3001}' ..= '\u{d7ff}'))
-                    | Some((_, '\u{f900}' ..= '\u{fdcf}'))
-                    | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+                Some('0' ..= '9')
+                    | Some('A' ..= 'Z')
+                    | Some('a' ..= 'z')
+                    | Some('_')
+                    | Some('-')
+                    | Some('\u{b7}')
+                    | Some('\u{c0}' ..= '\u{d6}')
+                    | Some('\u{d8}' ..= '\u{f6}')
+                    | Some('\u{f8}' ..= '\u{02ff}')
+                    | Some('\u{0370}' ..= '\u{037d}')
+                    | Some('\u{037f}' ..= '\u{1fff}')
+                    | Some('\u{200c}' ..= '\u{200d}')
+                    | Some('\u{2070}' ..= '\u{218f}')
+                    | Some('\u{2c00}' ..= '\u{2fef}')
+                    | Some('\u{3001}' ..= '\u{d7ff}')
+                    | Some('\u{f900}' ..= '\u{fdcf}')
+                    | Some('\u{fdf0}' ..= '\u{fffd}') => elements_traversed += 1,
                 _ => return Err(Error::InvalidBlankNode)
             }
         }
@@ -225,18 +217,17 @@ impl<'b> Lexer<'b> {
 
     fn parse_keyword(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+        let slice = self.iter.as_str();
         loop {
             match self.iter.next() {
-                Some((_, 'a' ..= 'z'))
-                    | Some((_, 'A' ..= 'Z')) => elements_traversed += 1,
-                Some((end, ' '))
-                    | Some((end, '\r'))
-                    | Some((end, '\n'))
-                    | Some((end, '#'))
-                    | Some((end, '<')) => {
-                        let start = end - elements_traversed;
-
-                        return Ok(&self.slice[start..end]);
+                Some('a' ..= 'z')
+                    | Some('A' ..= 'Z') => elements_traversed += 1,
+                Some(' ')
+                    | Some('\r')
+                    | Some('\n')
+                    | Some('#')
+                    | Some('<') => {
+                        return Ok(&slice[..elements_traversed]);
                     }
                 _ => return Err(Error::InvalidKeyword)
             }
@@ -245,75 +236,67 @@ impl<'b> Lexer<'b> {
 
     fn parse_variable(&mut self) -> Result<&'b str, Error> {
         let mut elements_traversed = 0;
+        let slice = self.iter.as_str();
 
         // TODO Add support for surrogate unicode point prefix. [\u{d800} ..= \u{db7f}] followed by [\u{dc00} ..= \u{dfff}]
         // Match valid starting characters.
         match self.iter.next() {
-            Some((_, 'A' ..= 'Z'))
-                | Some((_, 'a' ..= 'z'))
-                | Some((_, '_'))
-                | Some((_, '\u{c0}' ..= '\u{d6}'))
-                | Some((_, '\u{d8}' ..= '\u{f6}'))
-                | Some((_, '\u{f8}' ..= '\u{02ff}'))
-                | Some((_, '\u{0370}' ..= '\u{037d}'))
-                | Some((_, '\u{037f}' ..= '\u{1fff}'))
-                | Some((_, '\u{200c}' ..= '\u{200d}'))
-                | Some((_, '\u{2070}' ..= '\u{218f}'))
-                | Some((_, '\u{2c00}' ..= '\u{2fef}'))
-                | Some((_, '\u{3001}' ..= '\u{d7ff}'))
-                | Some((_, '\u{f900}' ..= '\u{fdcf}'))
-                | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+            Some('A' ..= 'Z')
+                | Some('a' ..= 'z')
+                | Some('_')
+                | Some('\u{c0}' ..= '\u{d6}')
+                | Some('\u{d8}' ..= '\u{f6}')
+                | Some('\u{f8}' ..= '\u{02ff}')
+                | Some('\u{0370}' ..= '\u{037d}')
+                | Some('\u{037f}' ..= '\u{1fff}')
+                | Some('\u{200c}' ..= '\u{200d}')
+                | Some('\u{2070}' ..= '\u{218f}')
+                | Some('\u{2c00}' ..= '\u{2fef}')
+                | Some('\u{3001}' ..= '\u{d7ff}')
+                | Some('\u{f900}' ..= '\u{fdcf}')
+                | Some('\u{fdf0}' ..= '\u{fffd}') => elements_traversed += 1,
             _ => return Err(Error::InvalidVariable)
         }
 
         loop {
             match self.iter.next() {
-                Some((end, '\t'))
-                    | Some((end, '.'))
-                    | Some((end, ','))
-                    | Some((end, ';'))
-                    | Some((end, '!'))
-                    | Some((end, '^'))
-                    | Some((end, ' '))
-                    | Some((end, '\n'))
-                    | Some((end, '\r'))
-                    | Some((end, '#'))
-                    | Some((end, '('))
-                    | Some((end, ')'))
-                    | Some((end, '['))
-                    | Some((end, ']'))
-                    | Some((end, '{'))
-                    | Some((end, '}'))
-                    | Some((end, '"'))
-                    | Some((end, '\''))
-                    | Some((end, '<')) => {
-                        let start = end - elements_traversed;
-
-                        return Ok(&self.slice[start..end]);
-                    },
-                None => {
-                    let end = self.slice.len();
-                    let start = end - elements_traversed;
-
-                    return Ok(&self.slice[start..end]);
-                }
-                Some((_, '0' ..= ':'))
-                    | Some((_, 'A' ..= 'Z'))
-                    | Some((_, 'a' ..= 'z'))
-                    | Some((_, '_'))
-                    | Some((_, '-'))
-                    | Some((_, '\u{b7}'))
-                    | Some((_, '\u{c0}' ..= '\u{d6}'))
-                    | Some((_, '\u{d8}' ..= '\u{f6}'))
-                    | Some((_, '\u{f8}' ..= '\u{02ff}'))
-                    | Some((_, '\u{0370}' ..= '\u{037d}'))
-                    | Some((_, '\u{037f}' ..= '\u{1fff}'))
-                    | Some((_, '\u{200c}' ..= '\u{200d}'))
-                    | Some((_, '\u{2070}' ..= '\u{218f}'))
-                    | Some((_, '\u{2c00}' ..= '\u{2fef}'))
-                    | Some((_, '\u{3001}' ..= '\u{d7ff}'))
-                    | Some((_, '\u{f900}' ..= '\u{fdcf}'))
-                    | Some((_, '\u{fdf0}' ..= '\u{fffd}')) => elements_traversed += 1,
+                Some('\t')
+                    | Some('.')
+                    | Some(',')
+                    | Some(';')
+                    | Some('!')
+                    | Some('^')
+                    | Some(' ')
+                    | Some('\n')
+                    | Some('\r')
+                    | Some('#')
+                    | Some('(')
+                    | Some(')')
+                    | Some('[')
+                    | Some(']')
+                    | Some('{')
+                    | Some('}')
+                    | Some('"')
+                    | Some('\'')
+                    | Some('<') => return Ok(&slice[..elements_traversed]),
+                None => return Ok(&slice[..elements_traversed]),
+                Some('0' ..= ':')
+                    | Some('A' ..= 'Z')
+                    | Some('a' ..= 'z')
+                    | Some('_')
+                    | Some('-')
+                    | Some('\u{b7}')
+                    | Some('\u{c0}' ..= '\u{d6}')
+                    | Some('\u{d8}' ..= '\u{f6}')
+                    | Some('\u{f8}' ..= '\u{02ff}')
+                    | Some('\u{0370}' ..= '\u{037d}')
+                    | Some('\u{037f}' ..= '\u{1fff}')
+                    | Some('\u{200c}' ..= '\u{200d}')
+                    | Some('\u{2070}' ..= '\u{218f}')
+                    | Some('\u{2c00}' ..= '\u{2fef}')
+                    | Some('\u{3001}' ..= '\u{d7ff}')
+                    | Some('\u{f900}' ..= '\u{fdcf}')
+                    | Some('\u{fdf0}' ..= '\u{fffd}') => elements_traversed += 1,
                 _ => return Err(Error::InvalidVariable)
             }
         }
@@ -336,7 +319,7 @@ impl <'b> Iterator for Lexer<'b> {
                 },
                 Some('_') => {
                     match self.iter.next() {
-                        Some((_, ':')) => {
+                        Some(':') => {
                             return Some(self.parse_blank_node().map(|node| LexerToken::Blank(LexerTokenData { prefix: "_", token_type: "blank", value: node, line: 0 })));
                         },
                         _ => return Some(Err(Error::InvalidBlankNode))
@@ -357,15 +340,15 @@ impl <'b> Iterator for Lexer<'b> {
 }
 
 pub(crate) fn tokenize_input<'b, S>(slice: &'b str) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
-    let indices = slice.char_indices();
-    let lexer: Lexer<'b> = Lexer::new(slice, indices);
+    let indices = slice.chars();
+    let lexer: Lexer<'b> = Lexer::new(indices);
     let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.collect();
     return result;
 }
 
 pub(crate) fn tokenize_input_with_options<'b, S>(slice: &'b str, options: LexerOptions) -> Result<heapless::Vec<LexerToken, S>, Error> where S: heapless::ArrayLength<LexerToken<'b>> {
-    let indices = slice.char_indices();
-    let lexer: Lexer<'b> = Lexer::new_with_options(slice, indices, options);
+    let indices = slice.chars();
+    let lexer: Lexer<'b> = Lexer::new_with_options(indices, options);
     let result: Result<heapless::Vec<LexerToken, S>, Error> = lexer.collect();
     return result;
 }
