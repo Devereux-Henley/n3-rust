@@ -21,6 +21,9 @@ pub enum Error {
     /// Invalid format for keyword
     InvalidKeyword,
 
+    /// Invalid format for a boolean
+    InvalidBoolean,
+
     /// Invalid number.
     InvalidNumber,
 
@@ -44,6 +47,7 @@ impl fmt::Display for Error {
                 Error::InvalidBlankNode => "Blank node was not correctly formatted.",
                 Error::InvalidVariable => "Variable was not correctly formatted",
                 Error::InvalidKeyword => "Keyword was not correctly formatted",
+                Error::InvalidBoolean => "Invalid boolean.",
                 Error::InvalidNumber => "Invalid number.",
                 Error::EofWhileParsingString => "File ended before ending \" was found.",
                 Error::TrailingCharacters => {
@@ -99,6 +103,51 @@ impl<'b> Lexer<'b> {
 
     fn new_with_options(iter: Chars<'b>, options: LexerOptions) -> Lexer<'b> {
         Lexer { iter, options }
+    }
+
+    fn parse_expected(&mut self, expected: &str) -> bool {
+        let mut chars = expected.chars();
+        loop {
+            let next_char = chars.next();
+
+            if next_char.is_none() {
+                return true;
+            }
+
+            match (next_char, self.iter.next()) {
+                (Some(v1), Some(v2)) => if v1 != v2 { return false },
+                (Some(_), None) => return false,
+                _ => continue
+            }
+        }
+    }
+
+    fn parse_bool(&mut self, val: bool) -> Result<&'b str, Error> {
+        let boolean_to_match = if val { "rue" } else { "alse" };
+        let matched_boolean = self.parse_expected(boolean_to_match);
+        if matched_boolean {
+            match self.iter.next() {
+                Some('.')
+                    | Some(',')
+                    | Some(';')
+                    | Some(' ')
+                    | Some('\r')
+                    | Some('\n')
+                    | Some('#')
+                    | Some('(')
+                    | Some(')')
+                    | Some('[')
+                    | Some(']')
+                    | Some('{')
+                    | Some('}')
+                    | Some('"')
+                    | Some('\'')
+                    | Some('<') => return Ok(if val { "true" } else { "false" }),
+                _ => return Err(Error::InvalidBoolean)
+            };
+        } {
+            return Err(Error::InvalidBoolean)
+        }
     }
 
     fn parse_str(&mut self) -> Result<&'b str, Error> {
@@ -309,7 +358,8 @@ impl <'b> Iterator for Lexer<'b> {
     fn next(&mut self) -> Option<Self::Item> {
         // Loop to allow fallthrough when options prevent token emission.
         loop {
-            match self.parse_whitespace() {
+            let next = self.parse_whitespace();
+            match next {
                 Some('#') => {
                     let comment_result = self.parse_comment();
 
@@ -331,6 +381,12 @@ impl <'b> Iterator for Lexer<'b> {
                 },
                 Some('?') => {
                     return Some(self.parse_variable().map(|variable| LexerToken::Variable(LexerTokenData { prefix: "?", token_type: "var", value: variable, line: 0})));
+                },
+                Some('f') => {
+                    return Some(self.parse_bool(false).map(|boolean| LexerToken::Literal(LexerTokenData { prefix: iri::xsd::BOOLEAN, token_type: "literal", value: boolean, line: 0})));
+                },
+                Some('t') => {
+                    return Some(self.parse_bool(true).map(|boolean| LexerToken::Literal(LexerTokenData { prefix: iri::xsd::BOOLEAN, token_type: "literal", value: boolean, line: 0})));
                 },
                 Some(_) => return Some(Err(Error::TrailingCharacters)),
                 None => return None
@@ -489,5 +545,28 @@ mod tests {
         let result_two: Result<heapless::Vec<super::LexerToken, consts::U64>, super::Error> = super::tokenize_input(slice_two);
 
         assert!(result_two.is_err());
+    }
+
+    #[test]
+    fn parse_boolean() {
+        let slice_one = "false;";
+        let result_one: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice_one).unwrap();
+
+        let parse_result_one = match &result_one[0] {
+            super::LexerToken::Literal(data) => data,
+            _ => panic!("First token was not a literal")
+        };
+
+        assert_eq!(parse_result_one.value, "false");
+
+        let slice_two = "true;";
+        let result_two: heapless::Vec<super::LexerToken, consts::U64> = super::tokenize_input(slice_two).unwrap();
+
+        let parse_result_two = match &result_two[0] {
+            super::LexerToken::Literal(data) => data,
+            _ => panic!("First token was not a literal")
+        };
+
+        assert_eq!(parse_result_two.value, "true");
     }
 }

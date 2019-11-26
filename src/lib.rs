@@ -1,8 +1,8 @@
 #![no_std]
 
 #[macro_use]
-mod iri;
+pub mod iri;
 
-mod factory;
+pub mod factory;
 
-mod lexer;
+pub mod lexer;
